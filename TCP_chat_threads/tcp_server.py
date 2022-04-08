@@ -3,6 +3,8 @@ import threading
 import traceback
 import sys
 import os
+import time
+from collections import deque
 
 #-----------------------------------------------------------------------------
 
@@ -10,10 +12,11 @@ import os
 HOST = '127.0.0.1'
 PORT = 65432
 BUFSIZE = 2048
-ENCODE = 'ascii'
+ENCODE = 'utf-8'
 PASSWORD = 'admin_1'
 TCP_KEEPALIVE_TIMEOUT = 300
 MSGLEN = 4096
+QUEUELEN = 10
 
 #-----------------------------------------------------------------------------
 
@@ -59,9 +62,12 @@ print ("[System]: Socket setup worked!")
 
 #-----------------------------------------------------------------------------
 
-# Lists for clients and nicknames
+# Lists for clients, nicknames, permissions and addresses
 clients = []
 nicknames = []
+permissions  = []
+addresses = []
+message_queue = deque([])
 
 #-----------------------------------------------------------------------------
 
@@ -89,9 +95,82 @@ def myreceive(socket):
 
 #-----------------------------------------------------------------------------
 
+def add_to_queue(message):
+    if len(message_queue) > 9:
+        message_queue.popleft()
+
+    message_queue.append(message)
+
+#-----------------------------------------------------------------------------
+
+def send_msg_history(client):
+    if len(message_queue) > 1:
+        queue = message_queue
+        queue.pop()
+        for msg in queue:
+            msg = msg + '\n'
+            client.sendall(msg.encode(ENCODE))
+
+#-----------------------------------------------------------------------------
+
+def request_processing(command, client):
+    command = command.decode(ENCODE)
+    if command == '<EXIT>':
+        if client in clients:
+            try:
+                time.sleep(0.5)
+                client.send("test_msg".encode(ENCODE))
+            except socket.error:
+                client.shutdown(socket.SHUT_RDWR)
+                client.close()
+            index = clients.index(client)
+            clients.remove(client)
+            nickname = nicknames[index]
+            nicknames.remove(nickname)
+            del permissions[index]
+            del addresses[index]
+            broadcast(f"[Server]: {nickname} left the Chat!".encode(ENCODE))
+            return True
+    elif command == '<PERMS>':
+        client.send('<PASSWORD>'.encode(ENCODE))
+        time.sleep(0.5)
+        password = client.recv(BUFSIZE).decode(ENCODE)
+        if password  != right_password:
+            client.sendall("[Client]: Wrong password - access denied".encode(ENCODE))
+        else:
+            index = clients.index(client)
+            permissions[index] = True
+            client.sendall("[Client]: Admin perms obtained".encode(ENCODE))
+    elif command.startswith('<KICK'):
+        if client in clients:
+            index = clients.index(client)
+            if permissions[index] == True:
+                print(command[6:len(command)-1])
+                kick_user(command[6:len(command)-1])
+            else:
+                client.sendall("[Client]: Command using denied: no admin rights")
+
+        else:
+            client.sendall("[Client]: Request from unknown user".encode(ENCODE))
+    elif command == '<USERLIST>':
+        if not nicknames:
+            client.sendall("[Server]: Sorry, userlist is empty!")
+        else:
+            message = ''
+            for num, nickname in enumerate(nicknames, start = 0):
+                #print(num)
+                message = message + f"{num+1}: [{nickname}] {addresses[num]}\n"
+            client.sendall(message.encode(ENCODE))
+    else:
+        client.sendall("[Client]: Unknown request")
+    return False
+
+
+#-----------------------------------------------------------------------------
+
 # Kicking user
 def kick_user(name):
-    if name in nicknames:
+    if name in clients:
         name_index = nicknames.index(name)
         client_to_kick = clients[name_index]
         clients.remove(client_to_kick)
@@ -99,19 +178,25 @@ def kick_user(name):
         client_to_kick.shutdown(socket.SHUT_RDWR)
         client_to_kick.close()
         nicknames.remove(name)
-        broadcast(f'[Server]: {name} was kicked from server!'.encode(ENCODE))
+        del permissions[name_index]
+        del addresses[index]
+        broadcast(f'[Server]: {name} was kicked from server!')
 
 #-----------------------------------------------------------------------------
 
 # Send message to all users of chat
-def broadcast(message):
+def broadcast(message, user=None):
+    add_to_queue(message)
     for client in clients:
-        try:
-            client.sendall(message)
-        except socket.error:
-            print("Socket.sendall error occured")
-            traceback.print_exc()
-            sys.exit(1)
+        if client == user:
+            continue
+        else:
+            try:
+                client.sendall(message.encode(ENCODE))
+            except socket.error:
+                print("Socket.sendall error occured")
+                traceback.print_exc()
+                sys.exit(1)
 
 #-----------------------------------------------------------------------------
 
@@ -130,27 +215,14 @@ def handle(client):
             if message == b'':
                 raise RuntimeError("Socket connection broken")
 
-            if  message.decode(ENCODE).startswith('KICK'):
-                if nicknames[clients.index(client)].startswith('/admin'):
-                    name_to_kick = msg.decode(ENCODE)[5:]
-                    kick_user(name_to_kick)
-                else:
-                    client.send("Command using denied: no admin rights".encode(ENCODE))
-            elif message.decode(ENCODE).startswith('EXIT'):
-                if client in clients:
-                    try:
-                        client.send("test_msg".encode(ENCODE))
-                    except socket.error:
-                        client.shutdown(socket.SHUT_RDWR)
-                        client.close()
-                    index = clients.index(client)
-                    clients.remove(client)
-                    nickname = nicknames[index]
-                    broadcast(f"[Server]: {nickname} left the Chat!".encode(ENCODE))
-                    nicknames.remove(nickname)
-                    break
+            if  message.startswith(b'<'):
+                if request_processing(message, client): break
             else:
-                broadcast(message)
+                if client in clients:
+                    index = clients.index(client)
+                    nickname = nicknames[index]
+                    message = f"[{nickname}]: {message.decode(ENCODE)}"
+                    broadcast(message, client)
 
         except:
             print("Handle_exception")
@@ -162,8 +234,10 @@ def handle(client):
                 client.shutdown(socket.SHUT_RDWR)
                 client.close()
                 nickname = nicknames[index]
-                broadcast(f"[Server]: {nickname} left the Chat!".encode(ENCODE))
                 nicknames.remove(nickname)
+                del permissions[index]
+                del addresses[index]
+                broadcast(f"[Server]: {nickname} left the Chat!")
                 break
             sys.exit(1)
 
@@ -180,22 +254,19 @@ def receive(right_password="admin_1"):
         client.sendall("NICK".encode(ENCODE))
         nickname = client.recv(BUFSIZE).decode(ENCODE)
 
-        if  nickname.startswith('/admin'):
-            client.send('PASSWORD'.encode(ENCODE))
-            password = client.recv(BUFSIZE).decode(ENCODE)
-            if password  != right_password:
-                client.sendall('DENIED'.encode(ENCODE))
-                client.shutdown(socket.SHUT_RDWR)
-                client.close()
-                continue
-
         nicknames.append(nickname)
         clients.append(client)
+        permissions.append(False)
+        addresses.append(address)
 
         # Print and broadcast nickname
         print(f"[System]: New user connected:[{nickname}]")
-        broadcast(f"[Server]: {nickname} joined!".encode(ENCODE))
-        client.send("[System]: Successfully connected to server!".encode(ENCODE))
+        broadcast(f"[Server]: {nickname} joined!")
+        time.sleep(0.5)
+        client.send("[Server]: Successfully connected to server!".encode(ENCODE))
+        time.sleep(0.5)
+        send_msg_history(client)
+
 
         # Starting new thread for handling client
         thread = threading.Thread(target=handle, args=(client,))

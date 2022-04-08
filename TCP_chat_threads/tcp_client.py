@@ -9,8 +9,10 @@ import os
 HOST = '127.0.0.1'
 PORT = 65432
 BUFSIZE = 1024
-ENCODE = 'ascii'
+ENCODE = 'utf-8'
 SOCKET_TIMEOUT = 5.0
+
+thread_stop = False
 
 # Input nickname
 nickname = input("[Client]: Input your nickname here: ")
@@ -53,23 +55,57 @@ print ("[Client]: Socket connect worked!")
 
 #---------------------------------------------------------------------------------------------
 
+def commands_processing(command, client):
+    if command == '/exit':
+        print("[Client]: Ending session...")
+        client.sendall('<EXIT>'.encode(ENCODE))
+        client.shutdown(socket.SHUT_RDWR)
+        client.close()
+        print("[Client]: Session ended, good bye!")
+        os._exit(1)
+    elif command == '/admin':
+        client.sendall('<PERMS>'.encode(ENCODE))
+        #time.sleep(0.5)
+        #answer_message = client.recv(BUFSIZE).decode(ENCODE)
+        #print("answer")
+        #if answer_message == '<PASSWORD>':
+         #   print("LOL")
+          #  client.sendall(input("[Client]: Enter password for admin: ").encode(ENCODE))
+           # answer_message = client.recv(BUFSIZE).decode(ENCODE)
+            #print(answer_message)
+            #if answer_message == '<DENIED>':
+                #print("[Client]: Wrong password - access denied")
+            #elif answer_message == '<ACCEPTED>':
+                #print("[Client]: Admin perms obtained")
+    #else:
+     #   print("[Client]: no answer for perms request")
+    elif command.startswith('/kick'):
+        couple = command.split()
+        client.sendall(f'<KICK_{couple[1]}>'.encode(ENCODE))
+        answer_message = client.recv(BUFSIZE).decode(ENCODE)
+        print(answer_message)
+    elif command == '/userlist':
+        client.sendall('<USERLIST>'.encode(ENCODE))
+    else:
+        print("[Client]: Unknown command")
+
+
+
+#---------------------------------------------------------------------------------------------
+
 # Listening to server and sending nickname
 def receive():
     while True:
         try:
             # If received message is "NICK" - send nickname
             message = client.recv(BUFSIZE).decode(ENCODE)
+            if message == '':
+                raise RuntimeError
 
             if message == 'NICK':
                 client.sendall(nickname.encode(ENCODE))
-                answer_message = client.recv(BUFSIZE).decode(ENCODE)
-                if answer_message == 'PASSWORD':
-                    client.sendall(password.encode(ENCODE))
-                    if client.recv(BUFSIZE).decode(ENCODE) == 'DENIED':
-                        print("[Client]: Wrong password - access denied")
-                        client.shutdown(socket.SHUT_RDWR)
-                        client.close()
-                        os._exit(1)
+            elif message == '<PASSWORD>':
+                client.sendall(input("[Client]: Enter password for admin: ").encode(ENCODE))
             else:
                 print(message)
         except socket.error:
@@ -89,34 +125,10 @@ def receive():
 def write():
     while True:
         # Reading messages
-        try: 
-            message = f'{nickname}: {input("")}'
-            print(message)
-            if nickname.startswith('/admin'):
-                message = message[len('/admin '):]
-                print(message)
-            if message[len(nickname)+2:].startswith('/'):
-                if message[len(nickname)+len(': '):].startswith('/exit'):
-                    print("[Client]: Ending session...")
-                    client.sendall('EXIT'.encode(ENCODE)) 
-                    client.shutdown(socket.SHUT_RDWR)
-                    client.close()
-                    print("[Client]: Session ended, good bye!")
-                    os._exit(1)
-                elif message[len(nickname)+len(': '):].startswith('/kick'):
-                    if nickname.startswith('/admin'):
-                        print(message[len(nickname)+len(": /kick_"):])
-                        client.send(f'KICK {message[len(nickname)+len(": /kick_"):]}'.encode(ENCODE))
-                    else:
-                        print("[Client]: Commands using denied: no admin rights")
-
-                #if nickname.startswith('/admin'):
-                    #if message[len(nickname)+len(': '):].startswith('/help'):
-                 #   if message[len(nickname)+len(': '):].startswith('/kick'):
-                    # 2 for : and whitespace and 6 for /KICK_
-                  #      client.send(f'KICK {message[len(nickname)+len(": /kick_"): ]}'.encode(ENCODE))
-                   # else:
-                    #    print("[Client]: Commands using denied: no admin rights")
+        try:
+            message = input('')
+            if message.startswith('/'):
+                commands_processing(message, client)
             else: 
                 client.sendall(message.encode(ENCODE))
         except socket.error:
