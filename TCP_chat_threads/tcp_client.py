@@ -64,26 +64,10 @@ def commands_processing(command, client):
         print("[Client]: Session ended, good bye!")
         os._exit(1)
     elif command == '/admin':
-        client.sendall('<PERMS>'.encode(ENCODE))
-        #time.sleep(0.5)
-        #answer_message = client.recv(BUFSIZE).decode(ENCODE)
-        #print("answer")
-        #if answer_message == '<PASSWORD>':
-         #   print("LOL")
-          #  client.sendall(input("[Client]: Enter password for admin: ").encode(ENCODE))
-           # answer_message = client.recv(BUFSIZE).decode(ENCODE)
-            #print(answer_message)
-            #if answer_message == '<DENIED>':
-                #print("[Client]: Wrong password - access denied")
-            #elif answer_message == '<ACCEPTED>':
-                #print("[Client]: Admin perms obtained")
-    #else:
-     #   print("[Client]: no answer for perms request")
+        client.sendall(('<PERMS_'+input("Input password: ")+'>').encode(ENCODE))
     elif command.startswith('/kick'):
-        couple = command.split()
-        client.sendall(f'<KICK_{couple[1]}>'.encode(ENCODE))
-        answer_message = client.recv(BUFSIZE).decode(ENCODE)
-        print(answer_message)
+        print(command[6:])
+        client.sendall(f'<KICK_{command[6:]}>'.encode(ENCODE))
     elif command == '/userlist':
         client.sendall('<USERLIST>'.encode(ENCODE))
     else:
@@ -101,13 +85,6 @@ def receive():
             message = client.recv(BUFSIZE).decode(ENCODE)
             if message == '':
                 raise RuntimeError
-
-            if message == 'NICK':
-                client.sendall(nickname.encode(ENCODE))
-            elif message == '<PASSWORD>':
-                client.sendall(input("[Client]: Enter password for admin: ").encode(ENCODE))
-            else:
-                print(message)
         except socket.error:
             print("Socket error occured!")
             traceback.print_exc()
@@ -120,6 +97,18 @@ def receive():
             client.shutdown(socket.SHUT_RDWR)
             client.close()
             os._exit(1)
+
+        if message == 'NICK':
+            client.sendall(nickname.encode(ENCODE))
+        elif message == '<KICKED>':
+            print('[System]: You were kicked from chat!')
+            client.shutdown(socket.SHUT_RDWR)
+            client.close()
+            print("[Client]: Session ended, good bye!")
+            os._exit(1)
+        else:
+            print(message)
+        
 
 # Sending messages
 def write():

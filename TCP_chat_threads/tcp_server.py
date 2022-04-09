@@ -74,7 +74,6 @@ message_queue = deque([])
 def mysend(socket, msg):
     totalsent = 0
     while totalsent < len(msg):
-        print("send_mysend")
         sent = socket.send(msg[totalsent:])
         if sent == 0:
             raise RuntimeError("[System]: Socket connection broken")
@@ -113,7 +112,7 @@ def send_msg_history(client):
 
 #-----------------------------------------------------------------------------
 
-def request_processing(command, client):
+def request_processing(command, client, right_password):
     command = command.decode(ENCODE)
     if command == '<EXIT>':
         if client in clients:
@@ -129,13 +128,10 @@ def request_processing(command, client):
             nicknames.remove(nickname)
             del permissions[index]
             del addresses[index]
-            broadcast(f"[Server]: {nickname} left the Chat!".encode(ENCODE))
+            broadcast(f"[Server]: {nickname} left the Chat!")
             return True
-    elif command == '<PERMS>':
-        client.send('<PASSWORD>'.encode(ENCODE))
-        time.sleep(0.5)
-        password = client.recv(BUFSIZE).decode(ENCODE)
-        if password  != right_password:
+    elif command.startswith('<PERMS_'):
+        if right_password  != command[7:-1]:
             client.sendall("[Client]: Wrong password - access denied".encode(ENCODE))
         else:
             index = clients.index(client)
@@ -145,10 +141,9 @@ def request_processing(command, client):
         if client in clients:
             index = clients.index(client)
             if permissions[index] == True:
-                print(command[6:len(command)-1])
-                kick_user(command[6:len(command)-1])
+                kick_user(command[6:-1])
             else:
-                client.sendall("[Client]: Command using denied: no admin rights")
+                client.sendall("[Client]: Command using denied: no admin rights".encode(ENCODE))
 
         else:
             client.sendall("[Client]: Request from unknown user".encode(ENCODE))
@@ -170,16 +165,16 @@ def request_processing(command, client):
 
 # Kicking user
 def kick_user(name):
-    if name in clients:
+    if name in nicknames:
         name_index = nicknames.index(name)
         client_to_kick = clients[name_index]
         clients.remove(client_to_kick)
-        client_to_kick.send('[System]: You were kicked from chat!', encode(ENCODE))
-        client_to_kick.shutdown(socket.SHUT_RDWR)
+        client_to_kick.send('<KICKED>'.encode(ENCODE))
+        time.sleep(0.5)
         client_to_kick.close()
         nicknames.remove(name)
         del permissions[name_index]
-        del addresses[index]
+        del addresses[name_index]
         broadcast(f'[Server]: {name} was kicked from server!')
 
 #-----------------------------------------------------------------------------
@@ -201,7 +196,7 @@ def broadcast(message, user=None):
 #-----------------------------------------------------------------------------
 
 # Handling msg from client
-def handle(client):
+def handle(client, right_password):
     while True:
         try:
             # Trying to get msg and broadcast it
@@ -213,10 +208,11 @@ def handle(client):
                 traceback.print_exc()
 
             if message == b'':
+                print(client)
                 raise RuntimeError("Socket connection broken")
 
             if  message.startswith(b'<'):
-                if request_processing(message, client): break
+                if request_processing(message, client, right_password): break
             else:
                 if client in clients:
                     index = clients.index(client)
@@ -263,13 +259,15 @@ def receive(right_password="admin_1"):
         print(f"[System]: New user connected:[{nickname}]")
         broadcast(f"[Server]: {nickname} joined!")
         time.sleep(0.5)
-        client.send("[Server]: Successfully connected to server!".encode(ENCODE))
+        client.send("[Server]: Successfully connected to server!\n".encode(ENCODE))
+        time.sleep(0.5)
+        client.send(("-"*25 + "Добро пожаловать на сервер ШИЗОФРЕНИЯ!" + "-"*25).encode(ENCODE))
         time.sleep(0.5)
         send_msg_history(client)
 
 
         # Starting new thread for handling client
-        thread = threading.Thread(target=handle, args=(client,))
+        thread = threading.Thread(target=handle, args=(client,right_password))
         thread.start()
 
 #-----------------------------------------------------------------------------
